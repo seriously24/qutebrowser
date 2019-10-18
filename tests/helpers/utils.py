@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -27,7 +27,7 @@ import contextlib
 
 import pytest
 
-from qutebrowser.utils import qtutils
+from qutebrowser.utils import qtutils, log
 
 
 qt58 = pytest.mark.skipif(
@@ -180,3 +180,13 @@ def abs_datapath():
 @contextlib.contextmanager
 def nop_contextmanager():
     yield
+
+
+@contextlib.contextmanager
+def ignore_bs4_warning():
+    """WORKAROUND for https://bugs.launchpad.net/beautifulsoup/+bug/1847592."""
+    with log.ignore_py_warnings(
+            category=DeprecationWarning,
+            message="Using or importing the ABCs from 'collections' instead "
+            "of from 'collections.abc' is deprecated", module='bs4.element'):
+        yield

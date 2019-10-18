@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -202,8 +202,8 @@ class BrowserPage(QWebPage):
         suggested_file = ""
         if info.suggestedFileNames:
             suggested_file = info.suggestedFileNames[0]
-        files.fileNames, _ = QFileDialog.getOpenFileNames(None, None,
-                                                          suggested_file)
+        files.fileNames, _ = QFileDialog.getOpenFileNames(
+            None, None, suggested_file)  # type: ignore
         return True
 
     def shutdown(self):
@@ -346,8 +346,13 @@ class BrowserPage(QWebPage):
             self.setFeaturePermission, frame, feature,
             QWebPage.PermissionDeniedByUser)
 
+        url = frame.url().adjusted(QUrl.RemoveUserInfo |
+                                   QUrl.RemovePath |
+                                   QUrl.RemoveQuery |  # type: ignore
+                                   QUrl.RemoveFragment)
+
         question = shared.feature_permission(
-            url=frame.url(),
+            url=url,
             option=options[feature], msg=messages[feature],
             yes_action=yes_action, no_action=no_action,
             abort_on=[self.shutting_down, self.loadStarted])

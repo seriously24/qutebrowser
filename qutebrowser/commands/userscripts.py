@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,6 +22,7 @@
 import os
 import os.path
 import tempfile
+import typing
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject, QSocketNotifier
 
@@ -113,7 +114,7 @@ class _BaseUserscriptRunner(QObject):
         self._cleaned_up = False
         self._filepath = None
         self._proc = None
-        self._env = {}
+        self._env = {}  # type: typing.MutableMapping[str, str]
         self._text_stored = False
         self._html_stored = False
         self._args = None

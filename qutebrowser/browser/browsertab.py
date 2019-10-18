@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,6 +22,7 @@
 import enum
 import itertools
 import typing
+import functools
 
 import attr
 from PyQt5.QtCore import (pyqtSignal, pyqtSlot, QUrl, QObject, QSizeF, Qt,
@@ -39,13 +40,11 @@ from qutebrowser.keyinput import modeman
 from qutebrowser.config import config
 from qutebrowser.utils import (utils, objreg, usertypes, log, qtutils,
                                urlutils, message)
-from qutebrowser.misc import miscwidgets, objects
-from qutebrowser.browser import mouse, hints
+from qutebrowser.misc import miscwidgets, objects, sessions
+from qutebrowser.browser import eventfilter
 from qutebrowser.qt import sip
-MYPY = False
-if MYPY:
-    # pylint can't interpret type comments with Python 3.7
-    # pylint: disable=unused-import,useless-suppression
+
+if typing.TYPE_CHECKING:
     from qutebrowser.browser import webelem
     from qutebrowser.browser.inspector import AbstractWebInspector
 
@@ -375,7 +374,7 @@ class AbstractZoom(QObject):
             levels, mode=usertypes.NeighborList.Modes.edge)
         self._neighborlist.fuzzyval = config.val.zoom.default
 
-    def apply_offset(self, offset: int) -> None:
+    def apply_offset(self, offset: int) -> int:
         """Increase/Decrease the zoom level by the given offset.
 
         Args:
@@ -384,7 +383,7 @@ class AbstractZoom(QObject):
         Return:
             The new zoom percentage.
         """
-        level = self._neighborlist.getitem(offset)
+        level = self._neighborlist.getitem(offset)  # type: int
         self.set_factor(float(level) / 100, fuzzyval=False)
         return level
 
@@ -437,6 +436,7 @@ class AbstractCaret(QObject):
         self._tab = tab
         self._widget = None
         self.selection_enabled = False
+        self._mode_manager = mode_manager
         mode_manager.entered.connect(self._on_mode_entered)
         mode_manager.left.connect(self._on_mode_left)
 
@@ -500,6 +500,9 @@ class AbstractCaret(QObject):
     def selection(self, callback: typing.Callable[[str], None]) -> None:
         raise NotImplementedError
 
+    def reverse_selection(self) -> None:
+        raise NotImplementedError
+
     def _follow_enter(self, tab: bool) -> None:
         """Follow a link by faking an enter press."""
         if tab:
@@ -525,7 +528,8 @@ class AbstractScroller(QObject):
         super().__init__(parent)
         self._tab = tab
         self._widget = None  # type: typing.Optional[QWidget]
-        self.perc_changed.connect(self._log_scroll_pos_change)
+        if 'log-scroll-pos' in objects.debug_flags:
+            self.perc_changed.connect(self._log_scroll_pos_change)
 
     @pyqtSlot()
     def _log_scroll_pos_change(self) -> None:
@@ -777,14 +781,16 @@ class AbstractTabPrivate:
 
     def handle_auto_insert_mode(self, ok: bool) -> None:
         """Handle `input.insert_mode.auto_load` after loading finished."""
-        if not config.val.input.insert_mode.auto_load or not ok:
+        if not ok or not config.cache['input.insert_mode.auto_load']:
             return
 
         cur_mode = self._mode_manager.mode
         if cur_mode == usertypes.KeyMode.insert:
             return
 
-        def _auto_insert_mode_cb(elem: 'webelem.AbstractWebElement') -> None:
+        def _auto_insert_mode_cb(
+                elem: typing.Optional['webelem.AbstractWebElement']
+        ) -> None:
             """Called from JS after finding the focused element."""
             if elem is None:
                 log.webview.debug("No focused element!")
@@ -879,15 +885,14 @@ class AbstractTab(QWidget):
         self._progress = 0
         self._has_ssl_errors = False
         self._load_status = usertypes.LoadStatus.none
-        self._mouse_event_filter = mouse.MouseEventFilter(
+        self._tab_event_filter = eventfilter.TabEventFilter(
             self, parent=self)
         self.backend = None
 
-        # FIXME:qtwebengine  Should this be public api via self.hints?
-        #                    Also, should we get it out of objreg?
-        hintmanager = hints.HintManager(win_id, self.tab_id, parent=self)
-        objreg.register('hintmanager', hintmanager, scope='tab',
-                        window=self.win_id, tab=self.tab_id)
+        # If true, this tab has been requested to be removed (or is removed).
+        self.pending_removal = False
+        self.shutting_down.connect(functools.partial(
+            setattr, self, 'pending_removal', True))
 
         self.before_load_started.connect(self._on_before_load_started)
 
@@ -1005,14 +1010,22 @@ class AbstractTab(QWidget):
             # https://github.com/qutebrowser/qutebrowser/issues/3498
             return
 
-        try:
-            sess_manager = objreg.get('session-manager')
-        except KeyError:
-            # https://github.com/qutebrowser/qutebrowser/issues/4311
-            return
+        if sessions.session_manager is not None:
+            sessions.session_manager.save_autosave()
 
-        sess_manager.save_autosave()
+        self.load_finished.emit(ok)
 
+        if not self.title():
+            self.title_changed.emit(self.url().toDisplayString())
+
+        self.zoom.reapply()
+
+    def _update_load_status(self, ok: bool) -> None:
+        """Update the load status after a page finished loading.
+
+        Needs to be called by subclasses to trigger a load status update, e.g.
+        as a response to a loadFinished signal.
+        """
         if ok and not self._has_ssl_errors:
             if self.url().scheme() == 'https':
                 self._set_load_status(usertypes.LoadStatus.success_https)
@@ -1022,13 +1035,6 @@ class AbstractTab(QWidget):
             self._set_load_status(usertypes.LoadStatus.warn)
         else:
             self._set_load_status(usertypes.LoadStatus.error)
-
-        self.load_finished.emit(ok)
-
-        if not self.title():
-            self.title_changed.emit(self.url().toDisplayString())
-
-        self.zoom.reapply()
 
     @pyqtSlot()
     def _on_history_trigger(self) -> None:

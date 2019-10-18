@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,7 +25,7 @@ import itertools
 import urllib
 import typing
 
-from PyQt5.QtCore import QUrl, QObject, QPoint, QTimer
+from PyQt5.QtCore import QUrl, QObject, QPoint, QTimer, pyqtSlot
 from PyQt5.QtWidgets import QApplication
 import yaml
 
@@ -38,12 +38,18 @@ from qutebrowser.mainwindow import mainwindow
 from qutebrowser.qt import sip
 
 
+_JsonType = typing.MutableMapping[str, typing.Any]
+
+
 class Sentinel:
 
     """Sentinel value for default argument."""
 
 
 default = Sentinel()
+session_manager = typing.cast('SessionManager', None)
+
+ArgType = typing.Union[str, Sentinel]
 
 
 def init(parent=None):
@@ -58,8 +64,14 @@ def init(parent=None):
     except FileExistsError:
         pass
 
+    global session_manager
     session_manager = SessionManager(base_path, parent)
-    objreg.register('session-manager', session_manager)
+    objreg.register('session-manager', session_manager, command_only=True)
+
+
+@pyqtSlot()
+def shutdown():
+    session_manager.delete_autosave()
 
 
 class SessionError(Exception):
@@ -136,8 +148,7 @@ class SessionManager(QObject):
             path = os.path.join(self._base_path, name + '.yml')
             if check_exists and not os.path.exists(path):
                 raise SessionNotFoundError(path)
-            else:
-                return path
+            return path
 
     def exists(self, name):
         """Check if a named session exists."""
@@ -161,7 +172,7 @@ class SessionManager(QObject):
         """
         data = {
             'url': bytes(item.url().toEncoded()).decode('ascii'),
-        }
+        }  # type: _JsonType
 
         if item.title():
             data['title'] = item.title()
@@ -207,7 +218,7 @@ class SessionManager(QObject):
             tab: The WebView to save.
             active: Whether the tab is currently active.
         """
-        data = {'history': []}
+        data = {'history': []}  # type: _JsonType
         if active:
             data['active'] = True
         for idx, item in enumerate(tab.history):
@@ -224,9 +235,9 @@ class SessionManager(QObject):
 
     def _save_all(self, *, only_window=None, with_private=False):
         """Get a dict with data for all windows/tabs."""
-        data = {'windows': []}
+        data = {'windows': []}  # type: _JsonType
         if only_window is not None:
-            winlist = [only_window]
+            winlist = [only_window]  # type: typing.Iterable[int]
         else:
             winlist = objreg.window_registry
 
@@ -243,7 +254,7 @@ class SessionManager(QObject):
             if tabbed_browser.is_private and not with_private:
                 continue
 
-            win_data = {}
+            win_data = {}  # type: _JsonType
             active_window = QApplication.instance().activeWindow()
             if getattr(active_window, 'win_id', None) == win_id:
                 win_data['active'] = True
@@ -301,10 +312,10 @@ class SessionManager(QObject):
         else:
             data = self._save_all(only_window=only_window,
                                   with_private=with_private)
-        log.sessions.vdebug("Saving data: {}".format(data))
+        log.sessions.vdebug("Saving data: {}".format(data))  # type: ignore
         try:
             with qtutils.savefile_open(path) as f:
-                utils.yaml_dump(data, f)
+                utils.yaml_dump(data, f)  # type: ignore
         except (OSError, UnicodeEncodeError, yaml.YAMLError) as e:
             raise SessionError(e)
 
@@ -337,7 +348,7 @@ class SessionManager(QObject):
     def _load_tab(self, new_tab, data):
         """Load yaml data into a newly opened tab."""
         entries = []
-        lazy_load = []
+        lazy_load = []  # type: typing.MutableSequence[_JsonType]
         # use len(data['history'])
         # -> dropwhile empty if not session.lazy_session
         lazy_index = len(data['history'])
@@ -405,6 +416,27 @@ class SessionManager(QObject):
         except ValueError as e:
             raise SessionError(e)
 
+    def _load_window(self, win):
+        """Turn yaml data into windows."""
+        window = mainwindow.MainWindow(geometry=win['geometry'],
+                                       private=win.get('private', None))
+        window.show()
+        tabbed_browser = objreg.get('tabbed-browser', scope='window',
+                                    window=window.win_id)
+        tab_to_focus = None
+        for i, tab in enumerate(win['tabs']):
+            new_tab = tabbed_browser.tabopen(background=False)
+            self._load_tab(new_tab, tab)
+            if tab.get('active', False):
+                tab_to_focus = i
+            if new_tab.data.pinned:
+                tabbed_browser.widget.set_tab_pinned(new_tab,
+                                                     new_tab.data.pinned)
+        if tab_to_focus is not None:
+            tabbed_browser.widget.setCurrentIndex(tab_to_focus)
+        if win.get('active', False):
+            QTimer.singleShot(0, tabbed_browser.widget.activateWindow)
+
     def load(self, name, temp=False):
         """Load a named session.
 
@@ -423,25 +455,13 @@ class SessionManager(QObject):
         if data is None:
             raise SessionError("Got empty session file")
 
+        if qtutils.is_single_process():
+            if any(win.get('private') for win in data['windows']):
+                raise SessionError("Can't load a session with private windows "
+                                   "in single process mode.")
+
         for win in data['windows']:
-            window = mainwindow.MainWindow(geometry=win['geometry'],
-                                           private=win.get('private', None))
-            window.show()
-            tabbed_browser = objreg.get('tabbed-browser', scope='window',
-                                        window=window.win_id)
-            tab_to_focus = None
-            for i, tab in enumerate(win['tabs']):
-                new_tab = tabbed_browser.tabopen(background=False)
-                self._load_tab(new_tab, tab)
-                if tab.get('active', False):
-                    tab_to_focus = i
-                if new_tab.data.pinned:
-                    tabbed_browser.widget.set_tab_pinned(new_tab,
-                                                         new_tab.data.pinned)
-            if tab_to_focus is not None:
-                tabbed_browser.widget.setCurrentIndex(tab_to_focus)
-            if win.get('active', False):
-                QTimer.singleShot(0, tabbed_browser.widget.activateWindow)
+            self._load_window(win)
 
         if data['windows']:
             self.did_load = True
@@ -510,7 +530,7 @@ class SessionManager(QObject):
     @cmdutils.argument('name', completion=miscmodels.session)
     @cmdutils.argument('win_id', value=cmdutils.Value.win_id)
     @cmdutils.argument('with_private', flag='p')
-    def session_save(self, name: typing.Union[str, Sentinel] = default,
+    def session_save(self, name: ArgType = default,
                      current: bool = False,
                      quiet: bool = False,
                      force: bool = False,

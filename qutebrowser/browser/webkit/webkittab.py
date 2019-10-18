@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -85,7 +85,7 @@ class WebKitSearch(browsertab.AbstractSearch):
 
     def __init__(self, tab, parent=None):
         super().__init__(tab, parent)
-        self._flags = QWebPage.FindFlags(0)
+        self._flags = QWebPage.FindFlags(0)  # type: ignore
 
     def _call_cb(self, callback, found, text, flags, caller):
         """Call the given callback if it's non-None.
@@ -157,7 +157,7 @@ class WebKitSearch(browsertab.AbstractSearch):
     def prev_result(self, *, result_cb=None):
         self.search_displayed = True
         # The int() here makes sure we get a copy of the flags.
-        flags = QWebPage.FindFlags(int(self._flags))
+        flags = QWebPage.FindFlags(int(self._flags))  # type: ignore
         if flags & QWebPage.FindBackward:
             flags &= ~QWebPage.FindBackward
         else:
@@ -350,6 +350,15 @@ class WebKitCaret(browsertab.AbstractCaret):
 
     def selection(self, callback):
         callback(self._widget.selectedText())
+
+    def reverse_selection(self):
+        self._tab.run_js_async("""{
+            const sel = window.getSelection();
+            sel.setBaseAndExtent(
+                sel.extentNode, sel.extentOffset, sel.baseNode,
+                sel.baseOffset
+            );
+        }""")
 
     def _follow_selected(self, *, tab=False):
         if QWebSettings.globalSettings().testAttribute(
@@ -716,7 +725,7 @@ class WebKitTab(browsertab.AbstractTab):
         self.backend = usertypes.Backend.QtWebKit
 
     def _install_event_filter(self):
-        self._widget.installEventFilter(self._mouse_event_filter)
+        self._widget.installEventFilter(self._tab_event_filter)
 
     def _make_private(self, widget):
         settings = widget.settings()
@@ -781,6 +790,11 @@ class WebKitTab(browsertab.AbstractTab):
         nam.netrc_used = False
         # Make sure the icon is cleared when navigating to a page without one.
         self.icon_changed.emit(QIcon())
+
+    @pyqtSlot(bool)
+    def _on_load_finished(self, ok: bool) -> None:
+        super()._on_load_finished(ok)
+        self._update_load_status(ok)
 
     @pyqtSlot()
     def _on_frame_load_finished(self):

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -24,6 +24,7 @@ Module attributes:
                 constants.
 """
 
+import typing
 import os.path
 
 from PyQt5.QtGui import QFont
@@ -36,7 +37,7 @@ from qutebrowser.browser import shared
 
 
 # The global WebKitSettings object
-global_settings = None
+global_settings = typing.cast('WebKitSettings', None)
 
 
 class WebKitSettings(websettings.AbstractSettings):

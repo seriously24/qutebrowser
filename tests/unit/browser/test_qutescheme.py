@@ -1,5 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
+# Copyright 2017-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 # Copyright 2017-2018 Imran Sobir
 #
 # This file is part of qutebrowser.
@@ -100,7 +101,6 @@ class TestHistoryHandler:
     @pytest.fixture(autouse=True)
     def fake_history(self, web_history, fake_args, entries):
         """Create fake history."""
-        fake_args.debug_flags = []
         for item in entries:
             web_history.add_url(**item)
 

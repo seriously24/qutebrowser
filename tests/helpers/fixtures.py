@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -47,8 +47,8 @@ from qutebrowser.config import (config, configdata, configtypes, configexc,
 from qutebrowser.api import config as configapi
 from qutebrowser.utils import objreg, standarddir, utils, usertypes
 from qutebrowser.browser import greasemonkey, history, qutescheme
-from qutebrowser.browser.webkit import cookies
-from qutebrowser.misc import savemanager, sql, objects
+from qutebrowser.browser.webkit import cookies, cache
+from qutebrowser.misc import savemanager, sql, objects, sessions
 from qutebrowser.keyinput import modeman
 
 
@@ -171,6 +171,7 @@ def testdata_scheme(qapp):
         global _qute_scheme_handler
         from qutebrowser.browser.webengine import webenginequtescheme
         from PyQt5.QtWebEngineWidgets import QWebEngineProfile
+        webenginequtescheme.init()
         _qute_scheme_handler = webenginequtescheme.QuteSchemeHandler(
             parent=qapp)
         _qute_scheme_handler.install(QWebEngineProfile.defaultProfile())
@@ -349,12 +350,11 @@ def bookmark_manager_stub(stubs):
 
 
 @pytest.fixture
-def session_manager_stub(stubs):
+def session_manager_stub(stubs, monkeypatch):
     """Fixture which provides a fake session-manager object."""
     stub = stubs.SessionManagerStub()
-    objreg.register('session-manager', stub)
-    yield stub
-    objreg.delete('session-manager')
+    monkeypatch.setattr(sessions, 'session_manager', stub)
+    return stub
 
 
 @pytest.fixture
@@ -367,15 +367,6 @@ def tabbed_browser_stubs(qapp, stubs, win_registry):
     yield stubs
     objreg.delete('tabbed-browser', scope='window', window=0)
     objreg.delete('tabbed-browser', scope='window', window=1)
-
-
-@pytest.fixture
-def app_stub(stubs):
-    """Fixture which provides a fake app object."""
-    stub = stubs.ApplicationStub()
-    objreg.register('app', stub)
-    yield stub
-    objreg.delete('app')
 
 
 @pytest.fixture
@@ -414,7 +405,7 @@ def qnam(qapp):
 
 
 @pytest.fixture
-def webengineview(qtbot, monkeypatch):
+def webengineview(qtbot, monkeypatch, web_tab_setup):
     """Get a QWebEngineView if QtWebEngine is available."""
     QtWebEngineWidgets = pytest.importorskip('PyQt5.QtWebEngineWidgets')
     monkeypatch.setattr(objects, 'backend', usertypes.Backend.QtWebEngine)
@@ -427,7 +418,15 @@ def webengineview(qtbot, monkeypatch):
 def webpage(qnam):
     """Get a new QWebPage object."""
     QtWebKitWidgets = pytest.importorskip('PyQt5.QtWebKitWidgets')
-    page = QtWebKitWidgets.QWebPage()
+    class WebPageStub(QtWebKitWidgets.QWebPage):
+
+        """QWebPage with default error pages disabled."""
+
+        def supportsExtension(self, _ext):
+            """No extensions needed."""
+            return False
+
+    page = WebPageStub()
     page.networkAccessManager().deleteLater()
     page.setNetworkAccessManager(qnam)
     return page
@@ -456,18 +455,11 @@ def webframe(webpage):
 
 
 @pytest.fixture
-def cookiejar_and_cache(stubs):
+def cookiejar_and_cache(stubs, monkeypatch):
     """Fixture providing a fake cookie jar and cache."""
-    jar = QNetworkCookieJar()
-    ram_jar = cookies.RAMCookieJar()
-    cache = stubs.FakeNetworkCache()
-    objreg.register('cookie-jar', jar)
-    objreg.register('ram-cookie-jar', ram_jar)
-    objreg.register('cache', cache)
-    yield
-    objreg.delete('cookie-jar')
-    objreg.delete('ram-cookie-jar')
-    objreg.delete('cache')
+    monkeypatch.setattr(cookies, 'cookie_jar', QNetworkCookieJar())
+    monkeypatch.setattr(cookies, 'ram_cookie_jar', cookies.RAMCookieJar())
+    monkeypatch.setattr(cache, 'diskcache', stubs.FakeNetworkCache())
 
 
 @pytest.fixture
@@ -492,18 +484,18 @@ def fake_save_manager():
 
 
 @pytest.fixture
-def fake_args(request):
+def fake_args(request, monkeypatch):
     ns = types.SimpleNamespace()
     ns.backend = 'webengine' if request.config.webengine else 'webkit'
     ns.debug_flags = []
-    objreg.register('args', ns)
-    yield ns
-    objreg.delete('args')
+
+    monkeypatch.setattr(objects, 'args', ns)
+    return ns
 
 
 @pytest.fixture
 def mode_manager(win_registry, config_stub, key_config_stub, qapp):
-    mm = modeman.init(0, parent=qapp)
+    mm = modeman.init(win_id=0, parent=qapp)
     yield mm
     objreg.delete('mode-manager', scope='window', window=0)
 
@@ -536,7 +528,20 @@ def config_tmpdir(monkeypatch, tmpdir):
 
     Use this to avoid creating a 'real' config dir (~/.config/qute_test).
     """
+    monkeypatch.setattr(
+        standarddir, 'config_py',
+        lambda **_kwargs: str(tmpdir / 'config' / 'config.py'))
     return standarddir_tmpdir('config', monkeypatch, tmpdir)
+
+
+@pytest.fixture
+def config_py_arg(tmpdir, monkeypatch):
+    """Set the config_py arg with a custom value for init."""
+    f = tmpdir / 'temp_config.py'
+    monkeypatch.setattr(
+        standarddir, 'config_py',
+        lambda **_kwargs: str(f))
+    return f
 
 
 @pytest.fixture

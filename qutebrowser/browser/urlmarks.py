@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 # Copyright 2015-2018 Antoni Boucher <bouanto@zoho.com>
 #
 # This file is part of qutebrowser.
@@ -30,6 +30,7 @@ import os.path
 import html
 import functools
 import collections
+import typing
 
 from PyQt5.QtCore import pyqtSignal, QUrl, QObject
 
@@ -77,7 +78,8 @@ class UrlMarkManager(QObject):
         """Initialize and read quickmarks."""
         super().__init__(parent)
 
-        self.marks = collections.OrderedDict()
+        self.marks = collections.OrderedDict(
+        )  # type: typing.MutableMapping[str, QUrl]
 
         self._init_lineparser()
         for line in self._lineparser:

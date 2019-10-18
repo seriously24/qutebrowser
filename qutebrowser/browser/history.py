@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,6 +22,7 @@
 import os
 import time
 import contextlib
+import typing
 
 from PyQt5.QtCore import pyqtSlot, QUrl, pyqtSignal
 from PyQt5.QtWidgets import QProgressDialog, QApplication
@@ -55,7 +56,7 @@ class HistoryProgress:
         self._progress.setMinimumDuration(500)
         self._progress.setLabelText(text)
         self._progress.setMaximum(maximum)
-        self._progress.setCancelButton(None)
+        self._progress.setCancelButton(None)  # type: ignore
         self._progress.show()
         QApplication.processEvents()
 
@@ -148,6 +149,8 @@ class WebHistory(sql.SqlTable):
                                       'redirect': 'NOT NULL'},
                          parent=parent)
         self._progress = progress
+        # Store the last saved url to avoid duplicate immedate saves.
+        self._last_url = None
 
         self.completion = CompletionHistory(parent=self)
         self.metainfo = CompletionMetaInfo(parent=self)
@@ -195,7 +198,7 @@ class WebHistory(sql.SqlTable):
     def _handle_sql_errors(self):
         try:
             yield
-        except sql.SqlEnvironmentError as e:
+        except sql.KnownError as e:
             message.error("Failed to write history: {}".format(e.text()))
 
     def _is_excluded(self, url):
@@ -204,7 +207,11 @@ class WebHistory(sql.SqlTable):
         return any(pattern.matches(url) for pattern in patterns)
 
     def _rebuild_completion(self):
-        data = {'url': [], 'title': [], 'last_atime': []}
+        data = {
+            'url': [],
+            'title': [],
+            'last_atime': []
+        }  # type: typing.Mapping[str, typing.MutableSequence[str]]
         # select the latest entry for each url
         q = sql.Query('SELECT url, title, max(atime) AS atime FROM History '
                       'WHERE NOT redirect and url NOT LIKE "qute://back%" '
@@ -276,6 +283,7 @@ class WebHistory(sql.SqlTable):
             self.delete_all()
             self.completion.delete_all()
         self.history_cleared.emit()
+        self._last_url = None
 
     def delete_url(self, url):
         """Remove all history entries with the given url.
@@ -287,6 +295,8 @@ class WebHistory(sql.SqlTable):
         qtutils.ensure_valid(qurl)
         self.delete('url', self._format_url(qurl))
         self.completion.delete('url', self._format_completion_url(qurl))
+        if self._last_url == url:
+            self._last_url = None
         self.url_cleared.emit(qurl)
 
     @pyqtSlot(QUrl, QUrl, str)
@@ -306,7 +316,9 @@ class WebHistory(sql.SqlTable):
             # If the url of the page is different than the url of the link
             # originally clicked, save them both.
             self.add_url(requested_url, title, redirect=True)
-        self.add_url(url, title)
+        if url != self._last_url:
+            self.add_url(url, title)
+            self._last_url = url
 
     def add_url(self, url, title="", *, redirect=False, atime=None):
         """Called via add_from_tab when a URL should be added to the history.
@@ -321,7 +333,7 @@ class WebHistory(sql.SqlTable):
             log.misc.warning("Ignoring invalid URL being added to history")
             return
 
-        if 'no-sql-history' in objreg.get('args').debug_flags:
+        if 'no-sql-history' in objects.debug_flags:
             return
 
         atime = int(atime) if (atime is not None) else int(time.time())

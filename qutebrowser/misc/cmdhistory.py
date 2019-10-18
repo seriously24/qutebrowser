@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -18,6 +18,8 @@
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
 """Command history for the status bar."""
+
+import typing
 
 from PyQt5.QtCore import pyqtSlot, pyqtSignal, QObject
 
@@ -58,7 +60,7 @@ class History(QObject):
         super().__init__(parent)
         self._tmphist = None
         if history is None:
-            self.history = []
+            self.history = []  # type: typing.Sequence[str]
         else:
             self.history = history
 

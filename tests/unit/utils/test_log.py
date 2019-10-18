@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -84,7 +84,6 @@ def restore_loggers():
         logger_dict = logging.getLogger().manager.loggerDict
         logger_dict.clear()
         logger_dict.update(saved_loggers)
-        logger_states = logger_states
         for name in logger_states:
             if logger_states[name] is not None:
                 saved_loggers[name].disabled = logger_states[name]

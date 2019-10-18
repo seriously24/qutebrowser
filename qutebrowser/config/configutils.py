@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2018-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -29,9 +29,7 @@ from PyQt5.QtCore import QUrl
 from qutebrowser.utils import utils, urlmatch
 from qutebrowser.config import configexc
 
-MYPY = False
-if MYPY:
-    # pylint: disable=unused-import,useless-suppression
+if typing.TYPE_CHECKING:
     from qutebrowser.config import configdata
 
 
